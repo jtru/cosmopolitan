@@ -20,12 +20,32 @@
 #include "libc/calls/internal.h"
 #include "libc/calls/syscall_support-nt.internal.h"
 #include "libc/intrin/fds.h"
+#include "libc/intrin/deviceiocontrol.c"
 #include "libc/nt/enum/filetype.h"
 #include "libc/nt/files.h"
 #include "libc/nt/struct/byhandlefileinformation.h"
 #include "libc/stdckdint.h"
 #include "libc/sysv/errfuns.h"
 #include "libc/thread/thread.h"
+
+// Constants that shoud better live elsewhere/be included from another header,
+// maybe in/from...
+//   libc/isystem/windowsesque.h
+//   libc/nt/enum/filemovemethod.h
+#define LARGE_INTEGER int64_t
+#define PLARGE_INTEGER int64_t*
+#define DWORD uint32_t
+#define FILE_BEGIN 0 // aka kNtFileBegin
+#define FILE_CURRENT 1 // aka kNtFileCurrent
+#define FILE_END 2 // aka kNtFileEnd
+
+// This is a macro on the "real" platform, but this pre-computed constant works
+// well enough during testing
+#define IOCTL_DISK_GET_LENGTH_INFO 0x0007405C
+
+typedef struct _GET_LENGTH_INFORMATION {
+  LARGE_INTEGER Length;
+} GET_LENGTH_INFORMATION, *PGET_LENGTH_INFORMATION;
 
 static textwindows int64_t GetPosition(struct Fd *f, int whence) {
   switch (whence) {
@@ -36,7 +56,24 @@ static textwindows int64_t GetPosition(struct Fd *f, int whence) {
     case SEEK_END: {
       struct NtByHandleFileInformation wst;
       if (!GetFileInformationByHandle(f->handle, &wst)) {
-        return __winerr();
+        int64_t sfp;
+        DWORD sfp_ret;
+        LARGE_INTEGER pos;
+        sfp_ret = SetFilePointer(f->handle,  0, &sfp, FILE_END);
+        if (sfp_ret == 0xFFFFFFFF) {
+          // TODO Check GetLastError() here
+          GET_LENGTH_INFORMATION lengthinfo;
+          DWORD bytes_returned;
+          // XXX TODO check if we actually have a physical diskdrive handle here?
+          if (!DeviceIoControl(f->handle, IOCTL_DISK_GET_LENGTH_INFO, NULL, 0, &lengthinfo, sizeof(lengthinfo), &bytes_returned, NULL)) {
+            return __winerr();
+          } else {
+            return lengthinfo.Length;
+          }
+        } else {
+          pos = ((uint64_t)((uint32_t)(sfp)) << 32) | sfp_ret;
+          return pos;
+        }
       }
       return (wst.nFileSizeHigh + 0ull) << 32 | wst.nFileSizeLow;
     }

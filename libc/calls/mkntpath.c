@@ -35,8 +35,12 @@ static inline int IsAlpha(int c) {
 }
 
 textwindows size_t __normntpath(char16_t *p, size_t n) {
-  size_t i, j;
-  for (j = i = 0; i < n; ++i) {
+  size_t i, j, s;
+  s = 0;
+  if (p[0] == '\\' && p[1] == '\\' && p[2] == '.' && p[3] == '\\') {
+    s = 3;
+  }
+  for (j = i = s; i < n; ++i) {
     int c = p[i];
     if (c == '/') {
       c = '\\';
